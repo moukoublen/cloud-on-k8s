@@ -23,7 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	entv1 "github.com/elastic/cloud-on-k8s/v3/pkg/apis/enterprisesearch/v1"
 	"github.com/elastic/cloud-on-k8s/v3/pkg/controller/association"
@@ -69,14 +68,15 @@ func newReconciler(mgr manager.Manager, params operator.Parameters) *ReconcileEn
 }
 
 func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileEnterpriseSearch) error {
+	m := r.NamespaceMatcher
 	// Watch for changes to EnterpriseSearch
-	err := c.Watch(source.Kind(mgr.GetCache(), &entv1.EnterpriseSearch{}, &handler.TypedEnqueueRequestForObject[*entv1.EnterpriseSearch]{}))
+	err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &entv1.EnterpriseSearch{}, &handler.TypedEnqueueRequestForObject[*entv1.EnterpriseSearch]{}))
 	if err != nil {
 		return err
 	}
 
 	// Watch Deployments
-	if err := c.Watch(source.Kind(mgr.GetCache(), &appsv1.Deployment{}, handler.TypedEnqueueRequestForOwner[*appsv1.Deployment](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &appsv1.Deployment{}, handler.TypedEnqueueRequestForOwner[*appsv1.Deployment](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&entv1.EnterpriseSearch{}, handler.OnlyControllerOwner(),
 	))); err != nil {
@@ -85,12 +85,12 @@ func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileEnterp
 
 	// Watch Pods, to ensure `status.version` and version upgrades are correctly reconciled on any change.
 	// Watching Deployments only may lead to missing some events.
-	if err := watches.WatchPods(mgr, c, EnterpriseSearchNameLabelName); err != nil {
+	if err := watches.WatchPods(mgr, c, m, EnterpriseSearchNameLabelName); err != nil {
 		return err
 	}
 
 	// Watch services
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Service{}, handler.TypedEnqueueRequestForOwner[*corev1.Service](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Service{}, handler.TypedEnqueueRequestForOwner[*corev1.Service](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&entv1.EnterpriseSearch{}, handler.OnlyControllerOwner(),
 	))); err != nil {
@@ -98,18 +98,18 @@ func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileEnterp
 	}
 
 	// Watch owned and soft-owned secrets
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}, handler.TypedEnqueueRequestForOwner[*corev1.Secret](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Secret{}, handler.TypedEnqueueRequestForOwner[*corev1.Secret](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&entv1.EnterpriseSearch{}, handler.OnlyControllerOwner(),
 	))); err != nil {
 		return err
 	}
-	if err := watches.WatchSoftOwnedSecrets(mgr, c, entv1.Kind); err != nil {
+	if err := watches.WatchSoftOwnedSecrets(mgr, c, m, entv1.Kind); err != nil {
 		return err
 	}
 
 	// Dynamically watch referenced secrets to connect to Elasticsearch
-	return c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}, r.dynamicWatches.Secrets))
+	return c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Secret{}, r.dynamicWatches.Secrets))
 }
 
 var _ reconcile.Reconciler = (*ReconcileEnterpriseSearch)(nil)
@@ -141,6 +141,9 @@ var _ driver.Interface = (*ReconcileEnterpriseSearch)(nil)
 // Reconcile reads that state of the cluster for an EnterpriseSearch object and makes changes based on the state read
 // and what is in the EnterpriseSearch.Spec.
 func (r *ReconcileEnterpriseSearch) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if !r.NamespaceMatcher.Matches(ctx, request.Namespace) {
+		return reconcile.Result{}, nil
+	}
 	ctx = common.NewReconciliationContext(ctx, &r.iteration, r.Tracer, controllerName, "ent_name", request)
 	defer common.LogReconciliationRun(ulog.FromContext(ctx))()
 	defer tracing.EndContextTransaction(ctx)

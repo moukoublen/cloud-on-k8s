@@ -153,6 +153,9 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if !r.NamespaceMatcher.Matches(ctx, request.Namespace) {
+		return reconcile.Result{}, nil
+	}
 	nameField := fmt.Sprintf("%s_name", r.AssociatedShortName)
 	ctx = common.NewReconciliationContext(ctx, &r.iteration, r.Tracer, r.AssociationName, nameField, request)
 	defer common.LogReconciliationRun(ulog.FromContext(ctx))()

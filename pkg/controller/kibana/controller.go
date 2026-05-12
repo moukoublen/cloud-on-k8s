@@ -20,7 +20,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	kbv1 "github.com/elastic/cloud-on-k8s/v3/pkg/apis/kibana/v1"
 	"github.com/elastic/cloud-on-k8s/v3/pkg/controller/common"
@@ -64,13 +63,14 @@ func newReconciler(mgr manager.Manager, params operator.Parameters) *ReconcileKi
 }
 
 func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileKibana) error {
+	m := r.params.NamespaceMatcher
 	// Watch for changes to Kibana
-	if err := c.Watch(source.Kind(mgr.GetCache(), &kbv1.Kibana{}, &handler.TypedEnqueueRequestForObject[*kbv1.Kibana]{})); err != nil {
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &kbv1.Kibana{}, &handler.TypedEnqueueRequestForObject[*kbv1.Kibana]{})); err != nil {
 		return err
 	}
 
 	// Watch deployments
-	if err := c.Watch(source.Kind(mgr.GetCache(), &appsv1.Deployment{}, handler.TypedEnqueueRequestForOwner[*appsv1.Deployment](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &appsv1.Deployment{}, handler.TypedEnqueueRequestForOwner[*appsv1.Deployment](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&kbv1.Kibana{}, handler.OnlyControllerOwner(),
 	))); err != nil {
@@ -79,30 +79,30 @@ func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileKibana
 
 	// Watch Pods, to ensure `status.version` and version upgrades are correctly reconciled on any change.
 	// Watching Deployments only may lead to missing some events.
-	if err := watches.WatchPods(mgr, c, kblabel.KibanaNameLabelName); err != nil {
+	if err := watches.WatchPods(mgr, c, m, kblabel.KibanaNameLabelName); err != nil {
 		return err
 	}
 
 	// Watch services
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Service{}, handler.TypedEnqueueRequestForOwner[*corev1.Service](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Service{}, handler.TypedEnqueueRequestForOwner[*corev1.Service](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&kbv1.Kibana{}, handler.OnlyControllerOwner(),
 	))); err != nil {
 		return err
 	}
 	// Watch owned and soft-owned secrets
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}, handler.TypedEnqueueRequestForOwner[*corev1.Secret](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Secret{}, handler.TypedEnqueueRequestForOwner[*corev1.Secret](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&kbv1.Kibana{}, handler.OnlyControllerOwner(),
 	))); err != nil {
 		return err
 	}
-	if err := watches.WatchSoftOwnedSecrets(mgr, c, kbv1.Kind); err != nil {
+	if err := watches.WatchSoftOwnedSecrets(mgr, c, m, kbv1.Kind); err != nil {
 		return err
 	}
 
 	// Watch configmaps
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.ConfigMap{}, handler.TypedEnqueueRequestForOwner[*corev1.ConfigMap](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.ConfigMap{}, handler.TypedEnqueueRequestForOwner[*corev1.ConfigMap](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&kbv1.Kibana{}, handler.OnlyControllerOwner(),
 	))); err != nil {
@@ -110,7 +110,7 @@ func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileKibana
 	}
 
 	// dynamically watch referenced secrets to connect to Elasticsearch
-	return c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}, r.dynamicWatches.Secrets))
+	return c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Secret{}, r.dynamicWatches.Secrets))
 }
 
 var _ reconcile.Reconciler = (*ReconcileKibana)(nil)
@@ -131,6 +131,9 @@ type ReconcileKibana struct {
 // Reconcile reads that state of the cluster for a Kibana object and makes changes based on the state read and what is
 // in the Kibana.Spec
 func (r *ReconcileKibana) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if !r.params.NamespaceMatcher.Matches(ctx, request.Namespace) {
+		return reconcile.Result{}, nil
+	}
 	ctx = common.NewReconciliationContext(ctx, &r.iteration, r.params.Tracer, controllerName, "kibana_name", request)
 	defer common.LogReconciliationRun(ulog.FromContext(ctx))()
 	defer tracing.EndContextTransaction(ctx)

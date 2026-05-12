@@ -16,7 +16,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v3/pkg/apis/logstash/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/v3/pkg/controller/association"
@@ -66,14 +65,15 @@ func newReconciler(mgr manager.Manager, params operator.Parameters) *ReconcileLo
 
 // addWatches adds watches for all resources this controller cares about
 func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileLogstash) error {
+	m := r.NamespaceMatcher
 	// Watch for changes to Logstash
-	if err := c.Watch(source.Kind(mgr.GetCache(), &logstashv1alpha1.Logstash{}, &handler.TypedEnqueueRequestForObject[*logstashv1alpha1.Logstash]{})); err != nil {
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &logstashv1alpha1.Logstash{}, &handler.TypedEnqueueRequestForObject[*logstashv1alpha1.Logstash]{})); err != nil {
 		return err
 	}
 
 	// Watch StatefulSets
 	if err := c.Watch(
-		source.Kind(mgr.GetCache(), &appsv1.StatefulSet{}, handler.TypedEnqueueRequestForOwner[*appsv1.StatefulSet](
+		watches.NamespacedKind(m, mgr.GetCache(), &appsv1.StatefulSet{}, handler.TypedEnqueueRequestForOwner[*appsv1.StatefulSet](
 			mgr.GetScheme(), mgr.GetRESTMapper(),
 			&logstashv1alpha1.Logstash{}, handler.OnlyControllerOwner(),
 		))); err != nil {
@@ -82,12 +82,12 @@ func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileLogsta
 
 	// Watch Pods, to ensure `status.version` is correctly reconciled on any change.
 	// Watching StatefulSets only may lead to missing some events.
-	if err := watches.WatchPods(mgr, c, labels.NameLabelName); err != nil {
+	if err := watches.WatchPods(mgr, c, m, labels.NameLabelName); err != nil {
 		return err
 	}
 
 	// Watch services
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Service{}, handler.TypedEnqueueRequestForOwner[*corev1.Service](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Service{}, handler.TypedEnqueueRequestForOwner[*corev1.Service](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&logstashv1alpha1.Logstash{}, handler.OnlyControllerOwner(),
 	))); err != nil {
@@ -95,18 +95,18 @@ func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileLogsta
 	}
 
 	// Watch owned and soft-owned secrets
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}, handler.TypedEnqueueRequestForOwner[*corev1.Secret](
+	if err := c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Secret{}, handler.TypedEnqueueRequestForOwner[*corev1.Secret](
 		mgr.GetScheme(), mgr.GetRESTMapper(),
 		&logstashv1alpha1.Logstash{}, handler.OnlyControllerOwner(),
 	))); err != nil {
 		return err
 	}
-	if err := watches.WatchSoftOwnedSecrets(mgr, c, logstashv1alpha1.Kind); err != nil {
+	if err := watches.WatchSoftOwnedSecrets(mgr, c, m, logstashv1alpha1.Kind); err != nil {
 		return err
 	}
 
 	// Watch dynamically referenced Secrets
-	return c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}, r.dynamicWatches.Secrets))
+	return c.Watch(watches.NamespacedKind(m, mgr.GetCache(), &corev1.Secret{}, r.dynamicWatches.Secrets))
 }
 
 var _ reconcile.Reconciler = (*ReconcileLogstash)(nil)
@@ -130,6 +130,9 @@ type ReconcileLogstash struct {
 // +kubebuilder:rbac:groups=logstash.k8s.elastic.co,resources=logstashes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=logstash.k8s.elastic.co,resources=logstashes/status,verbs=get;update;patch
 func (r *ReconcileLogstash) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if !r.NamespaceMatcher.Matches(ctx, request.Namespace) {
+		return reconcile.Result{}, nil
+	}
 	ctx = common.NewReconciliationContext(ctx, &r.iteration, r.Tracer, controllerName, "logstash_name", request)
 	defer common.LogReconciliationRun(ulog.FromContext(ctx))()
 	defer tracing.EndContextTransaction(ctx)

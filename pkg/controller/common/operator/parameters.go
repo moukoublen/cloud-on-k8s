@@ -12,6 +12,7 @@ import (
 
 	"github.com/elastic/cloud-on-k8s/v3/pkg/about"
 	"github.com/elastic/cloud-on-k8s/v3/pkg/controller/common/certificates"
+	"github.com/elastic/cloud-on-k8s/v3/pkg/controller/common/namespacematcher"
 	commonpassword "github.com/elastic/cloud-on-k8s/v3/pkg/controller/common/password"
 	esvalidation "github.com/elastic/cloud-on-k8s/v3/pkg/controller/elasticsearch/validation"
 	"github.com/elastic/cloud-on-k8s/v3/pkg/utils/cryptutil"
@@ -52,4 +53,9 @@ type Parameters struct {
 	ValidateStorageClass bool
 	// Tracer is a shared APM tracer instance or nil
 	Tracer *apm.Tracer
+	// NamespaceMatcher decides whether a namespace is currently in scope for
+	// ECK management. In legacy / static-resolution modes the matcher is
+	// disabled and admits everything; in dynamic mode it evaluates the
+	// configured namespaceSelector against the Namespace cache.
+	NamespaceMatcher *namespacematcher.Matcher
 }
